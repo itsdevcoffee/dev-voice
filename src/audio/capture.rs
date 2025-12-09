@@ -1,0 +1,310 @@
+use anyhow::{Context, Result};
+use libspa as spa_lib;
+use pipewire as pw;
+use pw::properties::properties;
+use pw::spa;
+use pw::spa::pod::Pod;
+use pw::stream::StreamFlags;
+use std::cell::RefCell;
+use std::io::Cursor;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
+
+/// Capture audio from the default microphone
+///
+/// Returns f32 PCM samples at 16kHz mono (Whisper requirement)
+pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
+    info!(
+        "Starting audio capture: {}s",
+        if duration_secs == 0 {
+            "unlimited".to_string()
+        } else {
+            duration_secs.to_string()
+        }
+    );
+
+    pw::init();
+
+    // Use the Rc variants for proper ownership management
+    let mainloop = pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire main loop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None).context("Failed to create PipeWire context")?;
+    let core = context
+        .connect_rc(None)
+        .context("Failed to connect to PipeWire")?;
+
+    // Shared state for audio capture
+    let audio_buffer: Rc<RefCell<Vec<f32>>> = Rc::new(RefCell::new(Vec::new()));
+    let start_time: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
+
+    let audio_buffer_clone = audio_buffer.clone();
+    let start_time_clone = start_time.clone();
+    let mainloop_weak = mainloop.downgrade();
+    let duration = duration_secs;
+
+    // Create stream properties for audio capture
+    // Request F32 format mono (Whisper requirements)
+    // Note: Resampling to 16kHz will be done post-capture if needed
+    let props = properties! {
+        *pw::keys::MEDIA_TYPE => "Audio",
+        *pw::keys::MEDIA_CATEGORY => "Capture",
+        *pw::keys::MEDIA_ROLE => "Communication",
+        *pw::keys::NODE_NAME => "dev-voice-capture",
+        *pw::keys::AUDIO_CHANNELS => "1",
+        *pw::keys::AUDIO_FORMAT => "F32LE",
+    };
+
+    let stream = pw::stream::StreamBox::new(&core, "dev-voice", props).context("Failed to create stream")?;
+
+    // Set up listener for stream events
+    let _listener = stream
+        .add_local_listener_with_user_data(())
+        .state_changed(|_, _, old, new| {
+            info!("Stream state changed: {:?} -> {:?}", old, new);
+        })
+        .param_changed(|_, _, id, pod| {
+            if let Some(_pod) = pod {
+                if id == spa::param::ParamType::Format.as_raw() {
+                    info!("Format negotiated");
+                }
+            }
+        })
+        .process(move |stream, _| {
+            // Initialize start time on first process call
+            {
+                let mut start = start_time_clone.borrow_mut();
+                if start.is_none() {
+                    *start = Some(Instant::now());
+                    info!("Recording started - speak now!");
+                }
+            }
+
+            // Check duration limit
+            if duration > 0 {
+                let start = start_time_clone.borrow();
+                if let Some(start_instant) = *start {
+                    if start_instant.elapsed() >= Duration::from_secs(duration as u64) {
+                        info!("Recording duration reached");
+                        if let Some(ml) = mainloop_weak.upgrade() {
+                            ml.quit();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Dequeue and process buffer
+            if let Some(mut buffer) = stream.dequeue_buffer() {
+                let datas = buffer.datas_mut();
+                if let Some(data) = datas.first_mut() {
+                    // Get the chunk info for actual data size
+                    let chunk = data.chunk();
+                    let offset = chunk.offset() as usize;
+                    let size = chunk.size() as usize;
+
+                    if let Some(slice) = data.data() {
+                        // Only process the actual data (offset to offset+size)
+                        let actual_data = if offset + size <= slice.len() {
+                            &slice[offset..offset + size]
+                        } else {
+                            slice
+                        };
+
+                        // PipeWire delivers audio as f32 samples
+                        // Since we requested mono but mic might be stereo, convert if needed
+                        let raw_samples = bytes_to_f32_samples(actual_data);
+                        // Assume stereo input (2 channels interleaved) - mix down to mono
+                        let samples: Vec<f32> = raw_samples
+                            .chunks(2)
+                            .map(|chunk| {
+                                if chunk.len() == 2 {
+                                    (chunk[0] + chunk[1]) / 2.0
+                                } else {
+                                    chunk[0]
+                                }
+                            })
+                            .collect();
+                        if !samples.is_empty() {
+                            audio_buffer_clone.borrow_mut().extend_from_slice(&samples);
+                            debug!("Captured {} mono samples (from {} raw)", samples.len(), raw_samples.len());
+                        }
+                    }
+                }
+            }
+        })
+        .register()?;
+
+    // Build audio format params for format negotiation
+    // Request F32LE mono audio at any rate (PipeWire will convert)
+    let obj = pw::spa::pod::object!(
+        pw::spa::utils::SpaTypes::ObjectParamFormat,
+        pw::spa::param::ParamType::EnumFormat,
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::MediaType,
+            Id,
+            pw::spa::param::format::MediaType::Audio
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::MediaSubtype,
+            Id,
+            pw::spa::param::format::MediaSubtype::Raw
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::AudioFormat,
+            Id,
+            spa_lib::param::audio::AudioFormat::F32LE
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::AudioChannels,
+            Int,
+            1
+        ),
+    );
+
+    let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
+        Cursor::new(Vec::new()),
+        &pw::spa::pod::Value::Object(obj),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to serialize audio params: {:?}", e))?
+    .0
+    .into_inner();
+
+    let mut params = [Pod::from_bytes(&values).expect("Failed to create Pod from bytes")];
+
+    // Connect the stream with Input direction (for capture)
+    stream
+        .connect(
+            spa::utils::Direction::Input,
+            None,
+            StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
+            &mut params,
+        )
+        .context("Failed to connect stream")?;
+
+    info!(
+        "Listening for {}...",
+        if duration == 0 {
+            "audio (press Ctrl+C to stop)".to_string()
+        } else {
+            format!("{} seconds", duration)
+        }
+    );
+
+    // Run the main loop - blocks until quit is called
+    let capture_start = Instant::now();
+    mainloop.run();
+    let capture_duration = capture_start.elapsed();
+
+    let raw_samples = audio_buffer.borrow().clone();
+
+    if raw_samples.is_empty() {
+        warn!("No audio captured - check microphone permissions");
+        return Ok(Vec::new());
+    }
+
+    // Calculate actual sample rate from captured data
+    let actual_duration_secs = capture_duration.as_secs_f32();
+    let detected_rate = (raw_samples.len() as f32 / actual_duration_secs) as u32;
+    info!(
+        "Captured {} samples in {:.2}s (detected ~{}Hz)",
+        raw_samples.len(),
+        actual_duration_secs,
+        detected_rate
+    );
+
+    // Resample to 16kHz for Whisper
+    let target_rate = 16000u32;
+    let samples = if detected_rate > target_rate + 1000 {
+        // Need to downsample
+        let ratio = detected_rate as f32 / target_rate as f32;
+        info!("Resampling from ~{}Hz to {}Hz (ratio: {:.2})", detected_rate, target_rate, ratio);
+        resample(&raw_samples, ratio)
+    } else if detected_rate < target_rate - 1000 {
+        // Need to upsample (unlikely but handle it)
+        let ratio = detected_rate as f32 / target_rate as f32;
+        info!("Resampling from ~{}Hz to {}Hz (ratio: {:.2})", detected_rate, target_rate, ratio);
+        resample(&raw_samples, ratio)
+    } else {
+        // Close enough to 16kHz
+        raw_samples
+    };
+
+    let final_duration = samples.len() as f32 / 16000.0;
+    info!("Final audio: {} samples ({:.2}s at 16kHz)", samples.len(), final_duration);
+
+    Ok(samples)
+}
+
+/// Simple linear resampling
+fn resample(samples: &[f32], ratio: f32) -> Vec<f32> {
+    let output_len = (samples.len() as f32 / ratio) as usize;
+    let mut output = Vec::with_capacity(output_len);
+
+    for i in 0..output_len {
+        let src_pos = i as f32 * ratio;
+        let src_idx = src_pos as usize;
+        let frac = src_pos - src_idx as f32;
+
+        if src_idx + 1 < samples.len() {
+            // Linear interpolation
+            let sample = samples[src_idx] * (1.0 - frac) + samples[src_idx + 1] * frac;
+            output.push(sample);
+        } else if src_idx < samples.len() {
+            output.push(samples[src_idx]);
+        }
+    }
+
+    output
+}
+
+/// Convert raw bytes to f32 samples
+/// Handles both f32 and i16 formats
+fn bytes_to_f32_samples(bytes: &[u8]) -> Vec<f32> {
+    // Try interpreting as f32 first (most common with PipeWire)
+    if bytes.len() % 4 == 0 {
+        let (prefix, samples, suffix) = unsafe { bytes.align_to::<f32>() };
+        if prefix.is_empty() && suffix.is_empty() {
+            return samples.to_vec();
+        }
+    }
+
+    // Fall back to i16 interpretation
+    if bytes.len() % 2 == 0 {
+        let (prefix, samples, suffix) = unsafe { bytes.align_to::<i16>() };
+        if prefix.is_empty() && suffix.is_empty() {
+            return samples
+                .iter()
+                .map(|&s| s as f32 / i16::MAX as f32)
+                .collect();
+        }
+    }
+
+    // Unable to interpret
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bytes_to_f32_from_f32() {
+        let floats: Vec<f32> = vec![0.5, -0.5, 1.0, -1.0];
+        let bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(floats.as_ptr() as *const u8, floats.len() * 4) };
+        let result = bytes_to_f32_samples(bytes);
+        assert_eq!(result, floats);
+    }
+
+    #[test]
+    fn test_bytes_to_f32_from_i16() {
+        let samples: Vec<i16> = vec![0, i16::MAX, i16::MIN];
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 2)
+        };
+        let result = bytes_to_f32_samples(bytes);
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - 0.0).abs() < 0.001);
+        assert!((result[1] - 1.0).abs() < 0.001);
+    }
+}

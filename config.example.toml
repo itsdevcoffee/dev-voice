@@ -1,0 +1,24 @@
+# Dev-Voice Configuration
+# Copy to ~/.config/dev-voice/config.toml
+
+[model]
+# Path to whisper model file
+# Download with: dev-voice download base.en
+path = "~/.local/share/dev-voice/models/ggml-base.en.bin"
+
+# Language code for transcription
+language = "en"
+
+[audio]
+# Sample rate in Hz (whisper requires 16000)
+sample_rate = 16000
+
+# Maximum recording duration in seconds (0 = no limit)
+timeout_secs = 30
+
+[output]
+# Display server: "wayland", "x11", or null for auto-detect
+# display_server = "wayland"
+
+# Add a space after injected text
+append_space = true

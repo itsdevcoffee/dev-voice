@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Whisper models (large binary files)
+/models/
+*.bin
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
