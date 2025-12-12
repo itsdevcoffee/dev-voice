@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DisplayServer {
@@ -88,13 +89,33 @@ pub fn copy_to_clipboard(text: &str, display: &DisplayServer) -> Result<()> {
 }
 
 fn inject_wayland(text: &str) -> Result<()> {
-    let status = Command::new("wtype")
-        .arg("-d")  // delay between keystrokes in ms
-        .arg("1")   // 1ms
-        .arg("--")
-        .arg(text)
-        .status()
-        .context("Failed to execute wtype. Is it installed? (sudo dnf install wtype)")?;
+    // Copy to clipboard first
+    info!("Copying text to clipboard ({} chars)", text.len());
+    copy_wayland(text)?;
+    info!("Clipboard copy successful");
+
+    // Small delay to ensure clipboard is set
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Detect if focused window is a terminal (needs Ctrl+Shift+V)
+    let (use_shift, window_class) = is_terminal_focused_with_class();
+    info!("Focused window class: {:?}, use_shift: {}", window_class, use_shift);
+
+    // Simulate paste: Ctrl+V or Ctrl+Shift+V for terminals
+    let status = if use_shift {
+        info!("Using Ctrl+Shift+V for terminal paste");
+        Command::new("wtype")
+            .args(["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
+            .status()
+    } else {
+        info!("Using Ctrl+V for standard paste");
+        Command::new("wtype")
+            .args(["-M", "ctrl", "-k", "v", "-m", "ctrl"])
+            .status()
+    }
+    .context("Failed to execute wtype. Is it installed? (sudo dnf install wtype)")?;
+
+    info!("wtype exit status: {:?}", status);
 
     if !status.success() {
         anyhow::bail!("wtype exited with status: {}", status);
@@ -103,9 +124,75 @@ fn inject_wayland(text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if the focused window is a terminal (requires Ctrl+Shift+V to paste)
+/// Returns (is_terminal, window_class)
+fn is_terminal_focused_with_class() -> (bool, Option<String>) {
+    let output = Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output();
+
+    let Ok(output) = output else {
+        debug!("hyprctl command failed");
+        return (false, None);
+    };
+
+    let Ok(json_str) = std::str::from_utf8(&output.stdout) else {
+        debug!("Failed to parse hyprctl output as UTF-8");
+        return (false, None);
+    };
+
+    debug!("hyprctl output: {}", json_str);
+
+    // Extract class from JSON using simple parsing
+    let class = extract_json_string(json_str, "class");
+    debug!("Extracted class: {:?}", class);
+
+    // Known terminal window classes
+    const TERMINALS: &[&str] = &[
+        "kitty",
+        "alacritty",
+        "foot",
+        "wezterm",
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "terminator",
+        "tilix",
+        "st",
+        "urxvt",
+        "xterm",
+    ];
+
+    let is_terminal = class.as_ref().map_or(false, |c| {
+        TERMINALS.iter().any(|t| c.to_lowercase() == *t)
+    });
+
+    (is_terminal, class)
+}
+
+/// Extract a string value from JSON (simple parser to avoid serde dependency)
+fn extract_json_string(json: &str, key: &str) -> Option<String> {
+    // Handle both "key": "value" and "key":"value" formats
+    let key_pattern = format!("\"{}\":", key);
+    let key_pos = json.find(&key_pattern)?;
+    let after_key = &json[key_pos + key_pattern.len()..];
+
+    // Skip whitespace and find opening quote
+    let trimmed = after_key.trim_start();
+    if !trimmed.starts_with('"') {
+        return None;
+    }
+
+    // Find the value between quotes
+    let value_start = 1; // skip opening quote
+    let value_end = trimmed[value_start..].find('"')?;
+    Some(trimmed[value_start..value_start + value_end].to_string())
+}
+
 fn inject_x11(text: &str) -> Result<()> {
+    // Type text character-by-character (no delay between keystrokes)
     let status = Command::new("xdotool")
-        .args(["type", "--clearmodifiers", "--", text])
+        .args(["type", "--clearmodifiers", "--delay", "0", "--", text])
         .status()
         .context("Failed to execute xdotool. Is it installed? (sudo dnf install xdotool)")?;
 
