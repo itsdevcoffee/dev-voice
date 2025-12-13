@@ -86,24 +86,28 @@ fn main() -> Result<()> {
     init_logging(cli.verbose)?;
 
     match cli.command {
-        Commands::Start { model, duration, clipboard } => {
+        Commands::Start {
+            model,
+            duration,
+            clipboard,
+        } => {
             cmd_start(model, duration, clipboard)?;
-        }
+        },
         Commands::Stop => {
             cmd_stop()?;
-        }
+        },
         Commands::Download { model } => {
             cmd_download(&model)?;
-        }
+        },
         Commands::Config { path, reset } => {
             cmd_config(path, reset)?;
-        }
+        },
         Commands::Doctor => {
             cmd_doctor()?;
-        }
+        },
         Commands::Daemon { model } => {
             cmd_daemon(model)?;
-        }
+        },
     }
 
     Ok(())
@@ -123,8 +127,7 @@ fn init_logging(verbose: bool) -> Result<()> {
         .with_ansi(false)
         .with_target(false);
 
-    let console_layer = tracing_subscriber::fmt::layer()
-        .with_target(false);
+    let console_layer = tracing_subscriber::fmt::layer().with_target(false);
 
     // Combine layers
     tracing_subscriber::registry()
@@ -158,11 +161,13 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
         anyhow::bail!(
             "Model not found: {}\nRun: dev-voice download {}",
             cfg.model.path.display(),
-            cfg.model.path.file_stem().unwrap_or_default().to_string_lossy()
+            cfg.model
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
         );
     }
-
-    let model_path_str = cfg.model.path.to_string_lossy().to_string();
 
     // Check if daemon is recording (check PID file created by daemon's thread)
     if state::is_recording()?.is_some() {
@@ -172,9 +177,7 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
 
         // Check if daemon is running
         if !daemon::is_daemon_running() {
-            anyhow::bail!(
-                "Daemon is not running. Start it first with: dev-voice daemon &"
-            );
+            anyhow::bail!("Daemon is not running. Start it first with: dev-voice daemon &");
         }
 
         // Create processing state file for UI feedback
@@ -215,22 +218,23 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
                 send_notification("Transcription Complete", &preview, "normal");
 
                 Ok(())
-            }
+            },
             daemon::DaemonResponse::Error { message } => {
                 anyhow::bail!("Daemon error: {}", message)
-            }
+            },
             _ => anyhow::bail!("Unexpected response from daemon"),
         }
     } else {
         // START mode: send start request to daemon and return immediately
-        info!("Starting recording via daemon (max {} seconds)", TOGGLE_MODE_TIMEOUT_SECS);
+        info!(
+            "Starting recording via daemon (max {} seconds)",
+            TOGGLE_MODE_TIMEOUT_SECS
+        );
         println!("Recording started. Run 'dev-voice start' again or 'dev-voice stop' to finish.");
 
         // Check if daemon is running
         if !daemon::is_daemon_running() {
-            anyhow::bail!(
-                "Daemon is not running. Start it first with: dev-voice daemon &"
-            );
+            anyhow::bail!("Daemon is not running. Start it first with: dev-voice daemon &");
         }
 
         // Send start request
@@ -243,13 +247,13 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
                 info!("Daemon started recording");
                 println!("Recording... Press Super+V again to stop and transcribe.");
                 Ok(())
-            }
+            },
             daemon::DaemonResponse::Error { message } => {
                 anyhow::bail!("Failed to start recording: {}", message)
-            }
+            },
             _ => {
                 anyhow::bail!("Unexpected response from daemon")
-            }
+            },
         }
     }
 }
@@ -269,7 +273,11 @@ fn cmd_start_fixed(model_override: Option<String>, duration: u32, clipboard: boo
         anyhow::bail!(
             "Model not found: {}\nRun: dev-voice download {}",
             cfg.model.path.display(),
-            cfg.model.path.file_stem().unwrap_or_default().to_string_lossy()
+            cfg.model
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
         );
     }
 
@@ -378,9 +386,12 @@ fn cmd_config(show_path: bool, reset: bool) -> Result<()> {
 fn send_notification(title: &str, body: &str, urgency: &str) {
     let _ = std::process::Command::new("notify-send")
         .args([
-            "-a", "dev-voice",
-            "-i", "audio-input-microphone",
-            "-u", urgency,
+            "-a",
+            "dev-voice",
+            "-i",
+            "audio-input-microphone",
+            "-u",
+            urgency,
             title,
             body,
         ])
@@ -398,7 +409,11 @@ fn cmd_daemon(model_override: Option<String>) -> Result<()> {
         anyhow::bail!(
             "Model not found: {}\nRun: dev-voice download {}",
             cfg.model.path.display(),
-            cfg.model.path.file_stem().unwrap_or_default().to_string_lossy()
+            cfg.model
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
         );
     }
 
@@ -441,12 +456,12 @@ fn cmd_doctor() -> Result<()> {
         output::DisplayServer::Wayland if !wtype_ok => {
             println!("\nWARNING: You're on Wayland but wtype is not installed.");
             println!("Install with: sudo dnf install wtype");
-        }
+        },
         output::DisplayServer::X11 if !xdotool_ok => {
             println!("\nWARNING: You're on X11 but xdotool is not installed.");
             println!("Install with: sudo dnf install xdotool");
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     let cfg = config::load()?;
@@ -466,10 +481,7 @@ fn cmd_doctor() -> Result<()> {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!(
-        "\n[{}] PipeWire",
-        if pw_ok { "OK" } else { "MISSING" }
-    );
+    println!("\n[{}] PipeWire", if pw_ok { "OK" } else { "MISSING" });
 
     // Show log location
     if let Ok(log_dir) = state::get_log_dir() {

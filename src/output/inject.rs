@@ -18,7 +18,7 @@ impl DisplayServer {
             match session_type.as_str() {
                 "wayland" => return Self::Wayland,
                 "x11" => return Self::X11,
-                _ => {} // Fall through to other checks
+                _ => {}, // Fall through to other checks
             }
         }
 
@@ -42,7 +42,8 @@ pub enum OutputMode {
 }
 
 impl OutputMode {
-    /// Parse from string
+    /// Parse from string (used in tests)
+    #[cfg(test)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "type" | "inject" => Some(Self::Type),
@@ -90,16 +91,13 @@ pub fn copy_to_clipboard(text: &str, display: &DisplayServer) -> Result<()> {
 
 fn inject_wayland(text: &str) -> Result<()> {
     // Save current clipboard to restore later
-    let saved_clipboard = Command::new("wl-paste")
-        .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                Some(output.stdout)
-            } else {
-                None
-            }
-        });
+    let saved_clipboard = Command::new("wl-paste").output().ok().and_then(|output| {
+        if output.status.success() {
+            Some(output.stdout)
+        } else {
+            None
+        }
+    });
 
     // Copy transcription to clipboard
     info!("Copying text to clipboard ({} chars)", text.len());
@@ -111,13 +109,18 @@ fn inject_wayland(text: &str) -> Result<()> {
 
     // Detect if focused window is a terminal (needs Ctrl+Shift+V)
     let (use_shift, window_class) = is_terminal_focused_with_class();
-    info!("Focused window class: {:?}, use_shift: {}", window_class, use_shift);
+    info!(
+        "Focused window class: {:?}, use_shift: {}",
+        window_class, use_shift
+    );
 
     // Simulate paste: Ctrl+V or Ctrl+Shift+V for terminals
     let status = if use_shift {
         info!("Using Ctrl+Shift+V for terminal paste");
         Command::new("wtype")
-            .args(["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
+            .args([
+                "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl",
+            ])
             .status()
     } else {
         info!("Using Ctrl+V for standard paste");
@@ -190,9 +193,9 @@ fn is_terminal_focused_with_class() -> (bool, Option<String>) {
         "xterm",
     ];
 
-    let is_terminal = class.as_ref().map_or(false, |c| {
-        TERMINALS.iter().any(|t| c.to_lowercase() == *t)
-    });
+    let is_terminal = class
+        .as_ref()
+        .is_some_and(|c| TERMINALS.iter().any(|t| c.to_lowercase() == *t));
 
     (is_terminal, class)
 }
@@ -280,7 +283,10 @@ mod tests {
     #[test]
     fn test_output_mode_parsing() {
         assert_eq!(OutputMode::from_str("type"), Some(OutputMode::Type));
-        assert_eq!(OutputMode::from_str("clipboard"), Some(OutputMode::Clipboard));
+        assert_eq!(
+            OutputMode::from_str("clipboard"),
+            Some(OutputMode::Clipboard)
+        );
         assert_eq!(OutputMode::from_str("copy"), Some(OutputMode::Clipboard));
         assert_eq!(OutputMode::from_str("invalid"), None);
     }

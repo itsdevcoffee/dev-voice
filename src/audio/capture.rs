@@ -27,8 +27,10 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     pw::init();
 
     // Use the Rc variants for proper ownership management
-    let mainloop = pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire main loop")?;
-    let context = pw::context::ContextRc::new(&mainloop, None).context("Failed to create PipeWire context")?;
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire main loop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None)
+        .context("Failed to create PipeWire context")?;
     let core = context
         .connect_rc(None)
         .context("Failed to connect to PipeWire")?;
@@ -40,7 +42,8 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     } else {
         16000 * 30 // Default 30 seconds for unlimited mode
     };
-    let audio_buffer: Rc<RefCell<Vec<f32>>> = Rc::new(RefCell::new(Vec::with_capacity(expected_samples)));
+    let audio_buffer: Rc<RefCell<Vec<f32>>> =
+        Rc::new(RefCell::new(Vec::with_capacity(expected_samples)));
     let start_time: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
 
     let audio_buffer_clone = audio_buffer.clone();
@@ -60,7 +63,8 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
         *pw::keys::AUDIO_FORMAT => "F32LE",
     };
 
-    let stream = pw::stream::StreamBox::new(&core, "dev-voice", props).context("Failed to create stream")?;
+    let stream =
+        pw::stream::StreamBox::new(&core, "dev-voice", props).context("Failed to create stream")?;
 
     // Set up listener for stream events
     let _listener = stream
@@ -132,7 +136,11 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
                             .collect();
                         if !samples.is_empty() {
                             audio_buffer_clone.borrow_mut().extend_from_slice(&samples);
-                            debug!("Captured {} mono samples (from {} raw)", samples.len(), raw_samples.len());
+                            debug!(
+                                "Captured {} mono samples (from {} raw)",
+                                samples.len(),
+                                raw_samples.len()
+                            );
                         }
                     }
                 }
@@ -175,7 +183,8 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     .0
     .into_inner();
 
-    let mut params = [Pod::from_bytes(&values).expect("Failed to create Pod from bytes")];
+    let mut params = [Pod::from_bytes(&values)
+        .ok_or_else(|| anyhow::anyhow!("Failed to create Pod from serialized bytes"))?];
 
     // Connect the stream with Input direction (for capture)
     stream
@@ -229,7 +238,11 @@ pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     };
 
     let final_duration = samples.len() as f32 / 16000.0;
-    info!("Final audio: {} samples ({:.2}s at 16kHz)", samples.len(), final_duration);
+    info!(
+        "Final audio: {} samples ({:.2}s at 16kHz)",
+        samples.len(),
+        final_duration
+    );
 
     Ok(samples)
 }
@@ -242,15 +255,18 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
 
     pw::init();
 
-    let mainloop = pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire main loop")?;
-    let context = pw::context::ContextRc::new(&mainloop, None).context("Failed to create PipeWire context")?;
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire main loop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None)
+        .context("Failed to create PipeWire context")?;
     let core = context
         .connect_rc(None)
         .context("Failed to connect to PipeWire")?;
 
     // Pre-allocate for max duration
     let expected_samples = 16000 * max_duration_secs as usize;
-    let audio_buffer: Rc<RefCell<Vec<f32>>> = Rc::new(RefCell::new(Vec::with_capacity(expected_samples)));
+    let audio_buffer: Rc<RefCell<Vec<f32>>> =
+        Rc::new(RefCell::new(Vec::with_capacity(expected_samples)));
     let start_time: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
 
     let audio_buffer_clone = audio_buffer.clone();
@@ -266,7 +282,8 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
         *pw::keys::AUDIO_FORMAT => "F32LE",
     };
 
-    let stream = pw::stream::StreamBox::new(&core, "dev-voice", props).context("Failed to create stream")?;
+    let stream =
+        pw::stream::StreamBox::new(&core, "dev-voice", props).context("Failed to create stream")?;
 
     let _listener = stream
         .add_local_listener_with_user_data(())
@@ -380,7 +397,8 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
     .0
     .into_inner();
 
-    let mut params = [Pod::from_bytes(&values).expect("Failed to create Pod from bytes")];
+    let mut params = [Pod::from_bytes(&values)
+        .ok_or_else(|| anyhow::anyhow!("Failed to create Pod from serialized bytes"))?];
 
     stream
         .connect(
@@ -404,7 +422,9 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
             if stop.is_none() {
                 // First time detecting stop - record the time and continue for 1 more second
                 *stop = Some(Instant::now());
-                info!("Stop signal detected - recording for 1 more second to capture trailing audio");
+                info!(
+                    "Stop signal detected - recording for 1 more second to capture trailing audio"
+                );
             } else if let Some(stop_instant) = *stop {
                 // Check if 1 second has passed since stop was detected
                 if stop_instant.elapsed() >= Duration::from_secs(1) {
@@ -451,7 +471,11 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
     };
 
     let final_duration = samples.len() as f32 / 16000.0;
-    info!("Final audio: {} samples ({:.2}s at 16kHz)", samples.len(), final_duration);
+    info!(
+        "Final audio: {} samples ({:.2}s at 16kHz)",
+        samples.len(),
+        final_duration
+    );
 
     Ok(samples)
 }
@@ -469,14 +493,14 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         from_rate as usize,
         to_rate as usize,
         chunk_size,
-        2,  // sub_chunks
-        1,  // channels (mono)
+        2, // sub_chunks
+        1, // channels (mono)
     ) {
         Ok(r) => r,
         Err(e) => {
             warn!("Failed to create resampler: {}, using linear fallback", e);
             return resample_linear(samples, from_rate as f32 / to_rate as f32);
-        }
+        },
     };
 
     let mut output_f64 = Vec::new();
@@ -499,11 +523,11 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
                 if let Some(channel) = output.first() {
                     output_f64.extend(channel);
                 }
-            }
+            },
             Err(e) => {
                 warn!("Resampling error: {}, using linear fallback", e);
                 return resample_linear(samples, from_rate as f32 / to_rate as f32);
-            }
+            },
         }
     }
 
@@ -574,9 +598,8 @@ mod tests {
     #[test]
     fn test_bytes_to_f32_from_i16() {
         let samples: Vec<i16> = vec![0, i16::MAX, i16::MIN];
-        let bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 2)
-        };
+        let bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 2) };
         let result = bytes_to_f32_samples(bytes);
         assert_eq!(result.len(), 3);
         assert!((result[0] - 0.0).abs() < 0.001);

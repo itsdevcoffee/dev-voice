@@ -19,9 +19,7 @@ impl Transcriber {
         let params = WhisperContextParameters::default();
 
         let ctx = WhisperContext::new_with_params(
-            model_path
-                .to_str()
-                .context("Invalid model path encoding")?,
+            model_path.to_str().context("Invalid model path encoding")?,
             params,
         )
         .context("Failed to load whisper model")?;
@@ -92,6 +90,7 @@ impl Transcriber {
 }
 
 /// Convert i16 audio samples to f32 (normalized to -1.0 to 1.0)
+#[cfg(test)]
 pub fn convert_i16_to_f32(samples: &[i16]) -> Vec<f32> {
     samples
         .iter()
@@ -100,6 +99,7 @@ pub fn convert_i16_to_f32(samples: &[i16]) -> Vec<f32> {
 }
 
 /// Convert stereo audio to mono by averaging channels
+#[cfg(test)]
 pub fn convert_stereo_to_mono(stereo: &[f32]) -> Vec<f32> {
     stereo
         .chunks(2)

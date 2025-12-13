@@ -37,7 +37,6 @@ pub fn verify_checksum(path: &Path, expected: &str) -> Result<bool> {
     Ok(matches)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

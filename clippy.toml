@@ -1,0 +1,17 @@
+# Clippy configuration for dev-voice
+# See: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# Cognitive complexity threshold - how complex a function can be
+cognitive-complexity-threshold = 25
+
+# Maximum number of function arguments before warning
+too-many-arguments-threshold = 7
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Don't warn about these lints (intentional exceptions)
+# msrv = "1.75.0"  # Minimum Supported Rust Version
+
+# Enforce documentation on public items
+# missing-docs-in-private-items = false

@@ -1,0 +1,18 @@
+# Rustfmt configuration for dev-voice
+# See: https://rust-lang.github.io/rustfmt/
+# Note: Only using stable features (unstable features require nightly Rust)
+
+# Use Rust 2024 edition formatting rules
+edition = "2024"
+
+# Maximum line width
+max_width = 100
+
+# Use default heuristics for formatting
+use_small_heuristics = "Default"
+
+# Match block formatting
+match_block_trailing_comma = true
+
+# Formatting style
+newline_style = "Unix"

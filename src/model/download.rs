@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;

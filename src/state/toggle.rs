@@ -15,6 +15,9 @@ pub static STOP_RECORDING: AtomicBool = AtomicBool::new(false);
 #[derive(Debug)]
 pub struct RecordingState {
     pub pid: u32,
+    /// Timestamp when recording started (Unix epoch seconds)
+    /// Useful for displaying recording duration in Waybar
+    #[allow(dead_code)]
     pub started_at: u64,
 }
 
@@ -29,15 +32,9 @@ pub fn is_recording() -> Result<Option<RecordingState>> {
     let content = fs::read_to_string(&pid_file)?;
     let mut lines = content.lines();
 
-    let pid: u32 = lines
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let pid: u32 = lines.next().and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    let started_at: u64 = lines
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let started_at: u64 = lines.next().and_then(|s| s.parse().ok()).unwrap_or(0);
 
     if pid == 0 {
         // Invalid PID file, clean up
@@ -64,22 +61,29 @@ pub fn start_recording() -> Result<()> {
     let pid = std::process::id();
     let started_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .context("System time is before UNIX epoch")?
         .as_secs();
 
-    let mut file = fs::File::create(&pid_file)
-        .context("Failed to create PID file")?;
+    let mut file = fs::File::create(&pid_file).context("Failed to create PID file")?;
 
     writeln!(file, "{}", pid)?;
     writeln!(file, "{}", started_at)?;
 
-    info!("Recording started (PID: {}, file: {})", pid, pid_file.display());
+    info!(
+        "Recording started (PID: {}, file: {})",
+        pid,
+        pid_file.display()
+    );
     Ok(())
 }
 
 /// Stop a running recording by sending SIGUSR1
+#[allow(dead_code)]
 pub fn stop_recording(state: &RecordingState) -> Result<()> {
-    info!("Sending stop signal to recording process (PID: {})", state.pid);
+    info!(
+        "Sending stop signal to recording process (PID: {})",
+        state.pid
+    );
 
     signal::kill(Pid::from_raw(state.pid as i32), Signal::SIGUSR1)
         .context("Failed to send stop signal to recording process")?;
@@ -101,8 +105,11 @@ pub fn cleanup_recording() -> Result<()> {
 pub fn setup_signal_handler() -> Result<()> {
     // Register handler for SIGUSR1
     unsafe {
-        signal::signal(Signal::SIGUSR1, signal::SigHandler::Handler(handle_stop_signal))
-            .context("Failed to set up signal handler")?;
+        signal::signal(
+            Signal::SIGUSR1,
+            signal::SigHandler::Handler(handle_stop_signal),
+        )
+        .context("Failed to set up signal handler")?;
     }
     Ok(())
 }

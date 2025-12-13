@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 /// Custom error types for dev-voice
+/// Currently using anyhow, but this provides a foundation for future custom error handling
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum DevVoiceError {
     #[error("Model not found: {path}")]
@@ -26,18 +28,13 @@ pub enum DevVoiceError {
     Config(String),
 
     #[error("Display server {server:?} requires {tool} which is not installed")]
-    MissingTool {
-        server: String,
-        tool: String,
-    },
+    MissingTool { server: String, tool: String },
 
     #[error("Unknown model: {name}. Available: {available}")]
-    UnknownModel {
-        name: String,
-        available: String,
-    },
+    UnknownModel { name: String, available: String },
 }
 
+#[allow(dead_code)]
 impl DevVoiceError {
     pub fn model_not_found(path: impl Into<PathBuf>) -> Self {
         Self::ModelNotFound { path: path.into() }

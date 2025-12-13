@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use tracing::{debug, error, info};
 
-use crate::daemon::protocol::{DaemonRequest, DaemonResponse};
-use crate::transcribe::Transcriber;
 use crate::audio::capture::capture_toggle;
+use crate::daemon::protocol::{DaemonRequest, DaemonResponse};
 use crate::state;
+use crate::transcribe::Transcriber;
 
 /// Get the path to the daemon socket
 pub fn get_socket_path() -> Result<PathBuf> {
@@ -39,8 +39,10 @@ pub fn is_daemon_running() -> bool {
         Err(_) => return false,
     };
 
-    // Send ping request
-    let ping = serde_json::to_string(&DaemonRequest::Ping).unwrap();
+    // Send ping request (serializing Ping should never fail)
+    let Ok(ping) = serde_json::to_string(&DaemonRequest::Ping) else {
+        return false;
+    };
     if stream.write_all(ping.as_bytes()).is_err() {
         return false;
     }
@@ -59,7 +61,7 @@ pub fn is_daemon_running() -> bool {
     }
 
     // Check if we got a valid pong response
-    serde_json::from_str::<DaemonResponse>(&line.trim()).is_ok()
+    serde_json::from_str::<DaemonResponse>(line.trim()).is_ok()
 }
 
 /// Shared state for async recording
@@ -78,8 +80,7 @@ struct DaemonServer {
 impl DaemonServer {
     fn new(model_path: &Path) -> Result<Self> {
         info!("Loading whisper model into GPU memory...");
-        let transcriber = Transcriber::new(model_path)
-            .context("Failed to load whisper model")?;
+        let transcriber = Transcriber::new(model_path).context("Failed to load whisper model")?;
         info!("Model loaded and resident in GPU VRAM");
 
         Ok(Self {
@@ -99,26 +100,26 @@ impl DaemonServer {
         reader.read_line(&mut line)?;
         info!("Received from client: {}", line.trim());
 
-        let request: DaemonRequest = serde_json::from_str(&line.trim())
-            .context("Failed to parse request")?;
+        let request: DaemonRequest =
+            serde_json::from_str(line.trim()).context("Failed to parse request")?;
 
         debug!("Parsed request: {:?}", request);
 
         let response = match request {
-            DaemonRequest::Ping => {
-                DaemonResponse::Ok { message: "pong".to_string() }
-            }
+            DaemonRequest::Ping => DaemonResponse::Ok {
+                message: "pong".to_string(),
+            },
             DaemonRequest::StartRecording { max_duration } => {
                 self.handle_start_recording(max_duration)?
-            }
-            DaemonRequest::StopRecording => {
-                self.handle_stop_recording()?
-            }
+            },
+            DaemonRequest::StopRecording => self.handle_stop_recording()?,
             DaemonRequest::Shutdown => {
                 info!("Shutdown requested");
                 self.shutdown.store(true, Ordering::SeqCst);
-                DaemonResponse::Ok { message: "shutting down".to_string() }
-            }
+                DaemonResponse::Ok {
+                    message: "shutting down".to_string(),
+                }
+            },
         };
 
         let response_json = serde_json::to_string(&response)?;
@@ -130,7 +131,11 @@ impl DaemonServer {
     }
 
     fn handle_start_recording(&self, max_duration: u32) -> Result<DaemonResponse> {
-        let mut state = self.recording_state.lock().unwrap();
+        // Atomic check-and-set: mutex ensures no race between check and state update
+        let mut state = self
+            .recording_state
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Recording state mutex poisoned: {}", e))?;
 
         // Check if already recording
         if state.handle.is_some() {
@@ -148,9 +153,7 @@ impl DaemonServer {
         state::toggle::setup_signal_handler()?;
 
         // Spawn recording thread
-        let handle = thread::spawn(move || {
-            capture_toggle(max_duration, 16000)
-        });
+        let handle = thread::spawn(move || capture_toggle(max_duration, 16000));
 
         state.handle = Some(handle);
         state.audio = None;
@@ -159,7 +162,10 @@ impl DaemonServer {
     }
 
     fn handle_stop_recording(&self) -> Result<DaemonResponse> {
-        let mut state = self.recording_state.lock().unwrap();
+        let mut state = self
+            .recording_state
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Recording state mutex poisoned: {}", e))?;
 
         // Check if recording
         let handle = match state.handle.take() {
@@ -168,7 +174,7 @@ impl DaemonServer {
                 return Ok(DaemonResponse::Error {
                     message: "Not recording".to_string(),
                 });
-            }
+            },
         };
 
         info!("Stop requested - signaling recording thread");
@@ -178,7 +184,8 @@ impl DaemonServer {
 
         // Wait for recording thread to finish
         drop(state); // Release lock while waiting
-        let samples = handle.join()
+        let samples = handle
+            .join()
             .map_err(|_| anyhow::anyhow!("Recording thread panicked"))??;
 
         // Reset stop flag for next recording
@@ -194,8 +201,12 @@ impl DaemonServer {
 
         // Transcribe with the persistent model
         info!("Transcribing {} samples...", samples.len());
-        let transcriber = self.transcriber.lock().unwrap();
-        let text = transcriber.transcribe(&samples)
+        let transcriber = self
+            .transcriber
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Transcriber mutex poisoned: {}", e))?;
+        let text = transcriber
+            .transcribe(&samples)
             .context("Transcription failed")?;
 
         if text.is_empty() {
@@ -217,13 +228,19 @@ impl DaemonServer {
 pub fn run_daemon(model_path: &Path) -> Result<()> {
     let socket_path = get_socket_path()?;
 
-    // Remove old socket if it exists
+    // Check if daemon is already running before removing socket
     if socket_path.exists() {
+        if is_daemon_running() {
+            anyhow::bail!(
+                "Daemon is already running. Stop it first or use the existing daemon."
+            );
+        }
+        // Socket exists but daemon not responding - it's stale, safe to remove
+        info!("Removing stale socket file");
         fs::remove_file(&socket_path)?;
     }
 
-    let listener = UnixListener::bind(&socket_path)
-        .context("Failed to bind Unix socket")?;
+    let listener = UnixListener::bind(&socket_path).context("Failed to bind Unix socket")?;
 
     info!("Daemon listening on {}", socket_path.display());
 
@@ -240,10 +257,10 @@ pub fn run_daemon(model_path: &Path) -> Result<()> {
                 if let Err(e) = server.handle_client(stream) {
                     error!("Error handling client: {}", e);
                 }
-            }
+            },
             Err(e) => {
                 error!("Error accepting connection: {}", e);
-            }
+            },
         }
     }
 
