@@ -7,6 +7,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod audio;
 mod config;
+mod daemon;
 mod error;
 mod model;
 mod output;
@@ -69,6 +70,13 @@ enum Commands {
 
     /// Check system dependencies
     Doctor,
+
+    /// Run daemon server (keeps model loaded in GPU memory)
+    Daemon {
+        /// Override model path
+        #[arg(short, long)]
+        model: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -92,6 +100,9 @@ fn main() -> Result<()> {
         }
         Commands::Doctor => {
             cmd_doctor()?;
+        }
+        Commands::Daemon { model } => {
+            cmd_daemon(model)?;
         }
     }
 
@@ -137,28 +148,7 @@ fn cmd_start(model_override: Option<String>, duration: u32, clipboard: bool) -> 
 
 /// Toggle mode: first call starts, second call stops
 fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<()> {
-    // Check if already recording
-    if let Some(recording_state) = state::is_recording()? {
-        info!("Recording in progress, sending stop signal...");
-        state::stop_recording(&recording_state)?;
-        println!("Stopping recording...");
-        return Ok(());
-    }
-
-    // Start new recording
-    info!("Starting toggle mode recording (max {} seconds)", TOGGLE_MODE_TIMEOUT_SECS);
-    println!("Recording started. Run 'dev-voice start' again or 'dev-voice stop' to finish.");
-
-    // Set up signal handler and mark as recording
-    state::toggle::setup_signal_handler()?;
-    state::toggle::start_recording()?;
-
-    // Ensure cleanup on exit
-    let _cleanup = scopeguard::guard((), |_| {
-        let _ = state::toggle::cleanup_recording();
-    });
-
-    // Load config and run recording
+    // Load config
     let mut cfg = config::load()?;
     if let Some(model_path) = model_override {
         cfg.model.path = model_path.into();
@@ -172,56 +162,96 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
         );
     }
 
-    let display_server = output::DisplayServer::detect();
-    let output_mode = if clipboard {
-        output::OutputMode::Clipboard
+    let model_path_str = cfg.model.path.to_string_lossy().to_string();
+
+    // Check if daemon is recording (check PID file created by daemon's thread)
+    if state::is_recording()?.is_some() {
+        // STOP mode: send stop request to daemon and wait for transcription
+        info!("Recording in progress, requesting transcription from daemon...");
+        println!("Stopping recording and transcribing...");
+
+        // Check if daemon is running
+        if !daemon::is_daemon_running() {
+            anyhow::bail!(
+                "Daemon is not running. Start it first with: dev-voice daemon &"
+            );
+        }
+
+        // Create processing state file for UI feedback
+        let processing_file = state::get_state_dir()?.join("processing");
+        std::fs::write(&processing_file, "")?;
+        let _processing_cleanup = scopeguard::guard((), |_| {
+            let _ = std::fs::remove_file(&processing_file);
+        });
+
+        // Send stop request and wait for transcription
+        let response = daemon::send_request(&daemon::DaemonRequest::StopRecording)?;
+
+        match response {
+            daemon::DaemonResponse::Success { text } => {
+                if text.is_empty() {
+                    info!("No speech detected");
+                    return Ok(());
+                }
+
+                // Output the transcribed text
+                let display_server = output::DisplayServer::detect();
+                let output_mode = if clipboard {
+                    output::OutputMode::Clipboard
+                } else {
+                    output::OutputMode::Type
+                };
+
+                info!("Transcribed: {}", text);
+                output::output_text(&text, output_mode, &display_server)?;
+                info!("Text output via {:?}", output_mode);
+
+                // Send notification
+                let preview = if text.len() > 80 {
+                    format!("{}...", text.chars().take(77).collect::<String>())
+                } else {
+                    text.clone()
+                };
+                send_notification("Transcription Complete", &preview, "normal");
+
+                Ok(())
+            }
+            daemon::DaemonResponse::Error { message } => {
+                anyhow::bail!("Daemon error: {}", message)
+            }
+            _ => anyhow::bail!("Unexpected response from daemon"),
+        }
     } else {
-        output::OutputMode::Type
-    };
+        // START mode: send start request to daemon and return immediately
+        info!("Starting recording via daemon (max {} seconds)", TOGGLE_MODE_TIMEOUT_SECS);
+        println!("Recording started. Run 'dev-voice start' again or 'dev-voice stop' to finish.");
 
-    info!("Loading whisper model...");
-    let transcriber = transcribe::Transcriber::new(&cfg.model.path)?;
-    info!("Model loaded successfully");
+        // Check if daemon is running
+        if !daemon::is_daemon_running() {
+            anyhow::bail!(
+                "Daemon is not running. Start it first with: dev-voice daemon &"
+            );
+        }
 
-    // Capture audio with toggle mode (checks for stop signal)
-    info!("Listening... (press Ctrl+C or run 'dev-voice stop' to finish)");
-    let audio_data = audio::capture_toggle(TOGGLE_MODE_TIMEOUT_SECS, cfg.audio.sample_rate)?;
-    info!("Captured {} samples", audio_data.len());
+        // Send start request
+        let response = daemon::send_request(&daemon::DaemonRequest::StartRecording {
+            max_duration: TOGGLE_MODE_TIMEOUT_SECS,
+        })?;
 
-    if audio_data.is_empty() {
-        info!("No audio captured");
-        return Ok(());
+        match response {
+            daemon::DaemonResponse::Recording => {
+                info!("Daemon started recording");
+                println!("Recording... Press Super+V again to stop and transcribe.");
+                Ok(())
+            }
+            daemon::DaemonResponse::Error { message } => {
+                anyhow::bail!("Failed to start recording: {}", message)
+            }
+            _ => {
+                anyhow::bail!("Unexpected response from daemon")
+            }
+        }
     }
-
-    // Create processing state file
-    let processing_file = state::get_state_dir()?.join("processing");
-    std::fs::write(&processing_file, "")?;
-    let _processing_cleanup = scopeguard::guard((), |_| {
-        let _ = std::fs::remove_file(&processing_file);
-    });
-
-    // Transcribe
-    info!("Transcribing...");
-    let text = transcriber.transcribe(&audio_data)?;
-
-    if text.is_empty() {
-        info!("No speech detected");
-        return Ok(());
-    }
-
-    info!("Transcribed: {}", text);
-    output::output_text(&text, output_mode, &display_server)?;
-    info!("Text output via {:?}", output_mode);
-
-    // Send notification with preview
-    let preview = if text.len() > 80 {
-        format!("{}...", text.chars().take(77).collect::<String>())
-    } else {
-        text
-    };
-    send_notification("Transcription Complete", &preview, "normal");
-
-    Ok(())
 }
 
 /// Fixed duration recording mode
@@ -295,7 +325,8 @@ fn cmd_start_fixed(model_override: Option<String>, duration: u32, clipboard: boo
 fn cmd_stop() -> Result<()> {
     if let Some(recording_state) = state::is_recording()? {
         info!("Stopping recording (PID: {})", recording_state.pid);
-        state::stop_recording(&recording_state)?;
+        // Send stop signal via daemon
+        daemon::daemon_stop_recording()?;
         println!("Stop signal sent to recording process");
     } else {
         println!("No recording in progress");
@@ -354,6 +385,30 @@ fn send_notification(title: &str, body: &str, urgency: &str) {
             body,
         ])
         .spawn();
+}
+
+fn cmd_daemon(model_override: Option<String>) -> Result<()> {
+    // Load config
+    let mut cfg = config::load()?;
+    if let Some(model_path) = model_override {
+        cfg.model.path = model_path.into();
+    }
+
+    if !cfg.model.path.exists() {
+        anyhow::bail!(
+            "Model not found: {}\nRun: dev-voice download {}",
+            cfg.model.path.display(),
+            cfg.model.path.file_stem().unwrap_or_default().to_string_lossy()
+        );
+    }
+
+    info!("Starting daemon with model: {}", cfg.model.path.display());
+    println!("Starting daemon...");
+
+    // Run the daemon server
+    daemon::run_daemon(&cfg.model.path)?;
+
+    Ok(())
 }
 
 fn cmd_doctor() -> Result<()> {

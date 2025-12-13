@@ -1,3 +1,3 @@
-mod capture;
+pub mod capture;
 
 pub use capture::*;

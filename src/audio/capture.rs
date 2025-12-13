@@ -393,13 +393,26 @@ pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f
 
     info!("Listening... (run 'dev-voice stop' to finish)");
 
-    // Add timer to check stop signal every 100ms
+    // Add timer to check stop signal every 100ms with 1-second buffer
     let mainloop_for_timer = mainloop.downgrade();
+    let stop_time: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
+    let stop_time_clone = stop_time.clone();
+
     let timer = mainloop.loop_().add_timer(move |_| {
         if should_stop() {
-            info!("Stop signal detected - shutting down");
-            if let Some(ml) = mainloop_for_timer.upgrade() {
-                ml.quit();
+            let mut stop = stop_time_clone.borrow_mut();
+            if stop.is_none() {
+                // First time detecting stop - record the time and continue for 1 more second
+                *stop = Some(Instant::now());
+                info!("Stop signal detected - recording for 1 more second to capture trailing audio");
+            } else if let Some(stop_instant) = *stop {
+                // Check if 1 second has passed since stop was detected
+                if stop_instant.elapsed() >= Duration::from_secs(1) {
+                    info!("Buffer period complete - shutting down");
+                    if let Some(ml) = mainloop_for_timer.upgrade() {
+                        ml.quit();
+                    }
+                }
             }
         }
     });
