@@ -1,0 +1,25 @@
+# Tarpaulin configuration for dev-voice
+# See: https://github.com/xd009642/tarpaulin
+
+[tarpaulin]
+# Output formats
+out = ["Html", "Lcov"]
+output-dir = "coverage"
+
+# Run configuration
+follow-exec = true
+skip-clean = true
+count = true
+
+# Exclusions
+exclude-files = [
+    "target/*",
+    "tests/*",  # Don't count test code toward coverage
+]
+
+# Timeout (in seconds)
+timeout = 300
+
+# Target coverage threshold (aspirational)
+# Currently at 14%, target 50% over time
+fail-under = 10
