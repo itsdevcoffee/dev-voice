@@ -11,7 +11,7 @@ use tracing::{info, warn};
 /// Capture audio from default microphone for fixed duration
 ///
 /// Returns f32 PCM samples at 16kHz mono (Whisper requirement)
-pub fn capture(duration_secs: u32, sample_rate: u32) -> Result<Vec<f32>> {
+pub fn capture(duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     info!("Starting audio capture: {}s", duration_secs);
 
     // Get default input device
@@ -25,15 +25,23 @@ pub fn capture(duration_secs: u32, sample_rate: u32) -> Result<Vec<f32>> {
         device.name().unwrap_or_else(|_| "Unknown".to_string())
     );
 
-    // Configure for mono f32 at requested sample rate
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
+    // Use device's default config (macOS often requires stereo at native sample rate)
+    let default_config = device
+        .default_input_config()
+        .context("Failed to get default input config")?;
 
-    // Pre-allocate buffer based on expected duration
-    let expected_samples = (sample_rate * duration_secs) as usize;
+    info!(
+        "Device default config: {} channels, {}Hz",
+        default_config.channels(),
+        default_config.sample_rate().0
+    );
+
+    let config = default_config.config();
+    let device_sample_rate = default_config.sample_rate().0;
+    let device_channels = default_config.channels();
+
+    // Pre-allocate buffer based on expected duration at device's sample rate
+    let expected_samples = (device_sample_rate * duration_secs) as usize * device_channels as usize;
     let buffer = Arc::new(Mutex::new(Vec::with_capacity(expected_samples)));
     let buffer_clone = buffer.clone();
 
@@ -72,20 +80,31 @@ pub fn capture(duration_secs: u32, sample_rate: u32) -> Result<Vec<f32>> {
         .map(|mutex| mutex.into_inner().unwrap())
         .unwrap_or_else(|arc| arc.lock().unwrap().clone());
 
-    let actual_duration = samples.len() as f32 / sample_rate as f32;
+    let actual_duration = samples.len() as f32 / (device_sample_rate * device_channels as u32) as f32;
     info!(
-        "Captured {} samples ({:.2}s at {}Hz)",
+        "Captured {} samples ({:.2}s at {}Hz, {} channels)",
         samples.len(),
         actual_duration,
-        sample_rate
+        device_sample_rate,
+        device_channels
     );
 
-    // Resample to 16kHz if needed
-    finalize_audio_samples(samples, sample_rate, 16000)
+    // Convert to mono if stereo, then resample to 16kHz for Whisper
+    let mono_samples = if device_channels == 2 {
+        // Convert stereo to mono by averaging channels
+        samples
+            .chunks_exact(2)
+            .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
+            .collect()
+    } else {
+        samples
+    };
+
+    finalize_audio_samples(mono_samples, device_sample_rate, 16000)
 }
 
 /// Capture in toggle mode - stops when signal received or max duration
-pub fn capture_toggle(max_duration_secs: u32, sample_rate: u32) -> Result<Vec<f32>> {
+pub fn capture_toggle(max_duration_secs: u32, _sample_rate: u32) -> Result<Vec<f32>> {
     use crate::state::toggle::should_stop;
 
     info!("Starting toggle mode capture (max {}s)", max_duration_secs);
@@ -93,13 +112,27 @@ pub fn capture_toggle(max_duration_secs: u32, sample_rate: u32) -> Result<Vec<f3
     let host = cpal::default_host();
     let device = host.default_input_device().context("No input device")?;
 
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
+    info!(
+        "Using audio device: {}",
+        device.name().unwrap_or_else(|_| "Unknown".to_string())
+    );
 
-    let expected_samples = (sample_rate * max_duration_secs) as usize;
+    // Use device's default config (macOS often requires stereo at native sample rate)
+    let default_config = device
+        .default_input_config()
+        .context("Failed to get default input config")?;
+
+    info!(
+        "Device default config: {} channels, {}Hz",
+        default_config.channels(),
+        default_config.sample_rate().0
+    );
+
+    let config = default_config.config();
+    let device_sample_rate = default_config.sample_rate().0;
+    let device_channels = default_config.channels();
+
+    let expected_samples = (device_sample_rate * max_duration_secs) as usize * device_channels as usize;
     let buffer = Arc::new(Mutex::new(Vec::with_capacity(expected_samples)));
     let buffer_clone = buffer.clone();
 
@@ -152,10 +185,27 @@ pub fn capture_toggle(max_duration_secs: u32, sample_rate: u32) -> Result<Vec<f3
         .map(|mutex| mutex.into_inner().unwrap())
         .unwrap_or_else(|arc| arc.lock().unwrap().clone());
 
-    info!("Captured {} samples", samples.len());
+    let actual_duration = samples.len() as f32 / (device_sample_rate * device_channels as u32) as f32;
+    info!(
+        "Captured {} samples ({:.2}s at {}Hz, {} channels)",
+        samples.len(),
+        actual_duration,
+        device_sample_rate,
+        device_channels
+    );
 
-    // Resample to 16kHz if needed
-    finalize_audio_samples(samples, sample_rate, 16000)
+    // Convert to mono if stereo, then resample to 16kHz for Whisper
+    let mono_samples = if device_channels == 2 {
+        // Convert stereo to mono by averaging channels
+        samples
+            .chunks_exact(2)
+            .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
+            .collect()
+    } else {
+        samples
+    };
+
+    finalize_audio_samples(mono_samples, device_sample_rate, 16000)
 }
 
 /// Perform post-capture resampling if needed
