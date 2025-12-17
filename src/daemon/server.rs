@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use tracing::{debug, error, info};
 
-use crate::audio::capture::capture_toggle;
+use crate::audio::capture_toggle;
 use crate::daemon::protocol::{DaemonRequest, DaemonResponse};
 use crate::state;
 use crate::transcribe::Transcriber;
@@ -231,9 +231,7 @@ pub fn run_daemon(model_path: &Path) -> Result<()> {
     // Check if daemon is already running before removing socket
     if socket_path.exists() {
         if is_daemon_running() {
-            anyhow::bail!(
-                "Daemon is already running. Stop it first or use the existing daemon."
-            );
+            anyhow::bail!("Daemon is already running. Stop it first or use the existing daemon.");
         }
         // Socket exists but daemon not responding - it's stale, safe to remove
         info!("Removing stale socket file");

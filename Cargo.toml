@@ -9,11 +9,11 @@ repository = "https://github.com/yourusername/dev-voice"
 
 [dependencies]
 # Speech recognition
-whisper-rs = "0.15"
+# Using git version for macOS 15 ARM build fix (ggml issue #1343, fixed Sept 23, 2025)
+whisper-rs = { git = "https://codeberg.org/tazz4843/whisper-rs" }
 
-# Audio capture
-pipewire = "0.9"
-libspa = "0.9"
+# Cross-platform audio (REPLACES pipewire + libspa)
+cpal = "0.16"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -32,8 +32,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
-# Signal handling for toggle mode
-nix = { version = "0.30", features = ["signal", "process"] }
 scopeguard = "1.2"
 
 # HTTP downloads
@@ -44,7 +42,10 @@ sha2 = "0.10"
 hex = "0.4"
 
 # Better resampling
-rubato = "0.15"
+rubato = "0.16"
+
+# Clipboard - always available
+arboard = "3.6"
 
 [dev-dependencies]
 tempfile = "3"
@@ -55,8 +56,30 @@ assert_matches = "1.5"  # Pattern matching assertions
 [features]
 default = []
 cuda = ["whisper-rs/cuda"]
+metal = ["whisper-rs/metal"]
 rocm = ["whisper-rs/hipblas"]
 vulkan = ["whisper-rs/vulkan"]
+
+# =============================================================================
+# Platform-specific dependencies
+# =============================================================================
+
+# Signal handling for toggle mode (Unix only - macOS and Linux)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["signal", "process"] }
+
+# macOS - uses CoreGraphics automatically
+[target.'cfg(target_os = "macos")'.dependencies]
+enigo = { version = "0.6" }
+
+# Windows - uses SendInput API automatically
+[target.'cfg(target_os = "windows")'.dependencies]
+enigo = { version = "0.6" }
+
+# Linux - Wayland by default (most modern distros)
+# X11 users: change ["wayland"] to ["x11rb"] below
+[target.'cfg(target_os = "linux")'.dependencies]
+enigo = { version = "0.6", default-features = false, features = ["wayland"] }
 
 [profile.release]
 lto = true
