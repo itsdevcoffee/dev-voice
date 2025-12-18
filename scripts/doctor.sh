@@ -30,7 +30,7 @@ echo ""
 
 echo "## NVIDIA GPU"
 if command -v nvidia-smi &> /dev/null; then
-    nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null || nvidia-smi 2>/dev/null | head -5
+    nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || nvidia-smi 2>/dev/null | head -5
 else
     echo "nvidia-smi: not found (no NVIDIA GPU or drivers not installed)"
 fi
@@ -68,29 +68,37 @@ fi
 if command -v dev-voice-cuda12 &> /dev/null; then
     BIN_GPU="$(command -v dev-voice-cuda12)"
 
-    echo "dev-voice-cuda12 (GPU) link-time dependencies (ldd):"
+    echo "dev-voice-cuda12 (GPU) ambient environment (may be polluted):"
+    echo "Current LD_LIBRARY_PATH shows Python CUDA paths - this is the problem we're fixing."
     ldd "$BIN_GPU" | grep -E 'cudart|cublas|cudnn|cuda' || echo "  ❌ ERROR: No CUDA libs found"
-    echo ""
 
-    echo "dev-voice-cuda12 (GPU) NEEDED libraries check:"
-    readelf -d "$BIN_GPU" | grep NEEDED | grep -E 'cudart|cublas|cudnn' || echo "  (No explicit CUDA NEEDED entries - may be indirect)"
-    echo ""
-
-    echo "dev-voice-cuda12 (GPU) runtime loader resolution (LD_DEBUG=libs):"
-    echo "(Showing actual runtime loading with strict mode - this is the real truth)"
-    echo "(Note: LD_DEBUG=libs is verbose; filtered for CUDA libs only)"
-    DEVVOICE_STRICT=1 LD_DEBUG=libs "$BIN_GPU" --version 2>&1 | grep -E 'cudart|cublas|cudnn|libcuda\.so' | grep -E 'calling init:|trying file:' | sed 's/^[[:space:]]*/  /' | head -30 || echo "  Failed to get runtime info"
-    echo ""
-
-    # Warn about Python pollution in ldd output
+    # Warn about Python pollution
     if ldd "$BIN_GPU" | grep -q "site-packages/nvidia"; then
-        echo "⚠️  WARNING: ldd shows Python site-packages paths!"
-        echo "   This means your system LD_LIBRARY_PATH is polluted."
-        echo "   The dev-voice-gpu wrapper (strict mode) prevents this at runtime."
+        echo ""
+        echo "⚠️  Confirmed: CUDA libraries would load from Python site-packages in ambient env!"
+    fi
+    echo ""
+
+    echo "dev-voice-cuda12 (GPU) NEEDED libraries:"
+    readelf -d "$BIN_GPU" | grep NEEDED | grep -E 'cudart|cublas|cudnn' || echo "  (No explicit CUDA NEEDED entries - dependencies may be indirect)"
+    echo ""
+
+    echo "dev-voice-cuda12 (GPU) with strict CUDA 12 env (Ollama-only):"
+    echo "This is what the binary sees when run with clean LD_LIBRARY_PATH:"
+    LD_LIBRARY_PATH=/usr/local/lib/ollama ldd "$BIN_GPU" | grep -E 'cudart|cublas|cublasLt|cudnn|cuda' || echo "  ❌ ERROR: CUDA libs not found even with Ollama path"
+    echo ""
+
+    # Show wrapper runtime resolution (the real truth)
+    if command -v dev-voice-gpu &> /dev/null; then
+        echo "dev-voice-cuda12 (GPU) via dev-voice-gpu wrapper (strict mode - REAL RUNTIME):"
+        echo "This is what actually loads when users run 'dev-voice-gpu':"
+        DEVVOICE_DEBUG=1 dev-voice-gpu --version 2>&1 | grep -A 10 "Libraries that will be loaded:" | grep -E 'libcuda|cudart|cublas|cublasLt|cudnn' || echo "  See debug output above"
         echo ""
     fi
-elif [ -x "./docs/tmp/dev-voice-linux-x64-cuda/dev-voice" ]; then
-    # Check downloaded artifact if not installed
+fi
+
+# Check downloaded artifact if not installed
+if [ ! command -v dev-voice-cuda12 &> /dev/null ] && [ -x "./docs/tmp/dev-voice-linux-x64-cuda/dev-voice" ]; then
     BIN_ARTIFACT="./docs/tmp/dev-voice-linux-x64-cuda/dev-voice"
     echo "Downloaded CUDA artifact (not installed):"
     echo "Link-time dependencies:"
