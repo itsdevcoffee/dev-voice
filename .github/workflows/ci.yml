@@ -99,21 +99,73 @@ jobs:
       - name: Run tests
         run: cargo test --lib
 
-  build-gpu:
-    name: Build GPU (${{ matrix.feature }} on ${{ matrix.os }})
+  build-cuda:
+    name: Build CUDA (Linux)
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.6.2-devel-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          apt-get update
+          apt-get install -y libclang-dev libasound2-dev pkg-config libxkbcommon-dev
+
+      - name: Build with CUDA
+        run: cargo build --release --features cuda
+
+      - name: Upload CUDA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-voice-linux-x64-cuda
+          path: target/release/dev-voice
+          retention-days: 90
+
+  build-metal:
+    name: Build Metal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build with Metal
+        run: cargo build --release --features metal
+
+      - name: Upload Metal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-voice-${{ matrix.os }}-arm64-metal
+          path: target/release/dev-voice
+          retention-days: 90
+
+  build-artifacts:
+    name: Build Release (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # CUDA on Linux
+          # Linux CPU-only
           - os: ubuntu-latest
-            feature: cuda
-          # Metal on macOS ARM64 only (macos-15 and macos-14)
+            name: Linux x64
+            artifact: dev-voice-linux-x64
+          # macOS ARM64 CPU-only
           - os: macos-15
-            feature: metal
-          - os: macos-14
-            feature: metal
+            name: macOS ARM64
+            artifact: dev-voice-macos-arm64
+          # macOS Intel CPU-only
+          - os: macos-15-large
+            name: macOS Intel
+            artifact: dev-voice-macos-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -126,26 +178,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev libasound2-dev pkg-config libxkbcommon-dev
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build release binary
+        run: cargo build --release
 
-      - name: Cache cargo index
-        uses: actions/cache@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-build-${{ matrix.feature }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build with GPU features
-        run: cargo build --features ${{ matrix.feature }}
+          name: ${{ matrix.artifact }}
+          path: target/release/dev-voice
+          retention-days: 90
 
   clippy:
     name: Clippy
