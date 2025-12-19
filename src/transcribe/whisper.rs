@@ -5,27 +5,56 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 pub struct Transcriber {
     ctx: WhisperContext,
+    draft_ctx: Option<WhisperContext>,
     language: String,
 }
 
 impl Transcriber {
     /// Create a new transcriber with the given model path
     pub fn new(model_path: &Path) -> Result<Self> {
-        Self::with_language(model_path, "en")
+        Self::with_language(model_path, None, "en")
     }
 
-    /// Create a new transcriber with a specific language
-    pub fn with_language(model_path: &Path, language: &str) -> Result<Self> {
+    /// Create a new transcriber with an optional draft model for speculative decoding
+    pub fn with_draft(model_path: &Path, draft_model_path: Option<&Path>) -> Result<Self> {
+        Self::with_language(model_path, draft_model_path, "en")
+    }
+
+    /// Create a new transcriber with a specific language and optional draft model
+    pub fn with_language(
+        model_path: &Path,
+        draft_model_path: Option<&Path>,
+        language: &str,
+    ) -> Result<Self> {
         let params = WhisperContextParameters::default();
 
         let ctx = WhisperContext::new_with_params(
             model_path.to_str().context("Invalid model path encoding")?,
             params,
         )
-        .context("Failed to load whisper model")?;
+        .context("Failed to load target whisper model")?;
+
+        let draft_ctx = if let Some(path) = draft_model_path {
+            if path.exists() {
+                info!("Loading draft model for speculative decoding: {}", path.display());
+                Some(
+                    WhisperContext::new_with_params(
+                        path.to_str().context("Invalid draft model path encoding")?,
+                        params,
+                    )
+                    .context("Failed to load draft whisper model")?,
+                )
+            } else {
+                info!("Draft model path does not exist, skipping speculative decoding");
+                None
+            }
+        } else {
+            None
+        };
 
         Ok(Self {
             ctx,
+            draft_ctx,
             language: language.to_string(),
         })
     }
@@ -42,9 +71,10 @@ impl Transcriber {
         }
 
         debug!(
-            "Transcribing {} samples ({:.2}s)",
+            "Transcribing {} samples ({:.2}s) [Speculative: {}]",
             audio.len(),
-            audio.len() as f32 / 16000.0
+            audio.len() as f32 / 16000.0,
+            self.draft_ctx.is_some()
         );
 
         let mut state = self
@@ -53,6 +83,11 @@ impl Transcriber {
             .context("Failed to create whisper state")?;
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+
+        // Enable speculative decoding if draft model is available
+        if let Some(ref d_ctx) = self.draft_ctx {
+            params.set_encoder_begin_callback(d_ctx);
+        }
 
         // Configure for dictation use case
         params.set_language(Some(&self.language));

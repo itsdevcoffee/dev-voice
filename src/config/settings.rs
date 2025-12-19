@@ -15,6 +15,8 @@ pub struct Config {
 pub struct ModelConfig {
     /// Path to whisper model file
     pub path: PathBuf,
+    /// Path to optional draft model file for speculative decoding
+    pub draft_model_path: Option<PathBuf>,
     /// Language code (e.g., "en")
     pub language: String,
 }
@@ -43,7 +45,8 @@ impl Default for Config {
 
         Self {
             model: ModelConfig {
-                path: data_dir.join("models/ggml-base.en.bin"),
+                path: data_dir.join("models/ggml-large-v3-turbo.bin"),
+                draft_model_path: Some(data_dir.join("models/ggml-tiny.en.bin")),
                 language: "en".to_string(),
             },
             audio: AudioConfig {
