@@ -74,7 +74,25 @@ pub fn start_recording() -> Result<()> {
         pid,
         pid_file.display()
     );
+
+    // Refresh Waybar
+    refresh_waybar();
+
     Ok(())
+}
+
+/// Refresh Waybar status by sending SIGRTMIN+8
+fn refresh_waybar() {
+    // Run in background to avoid blocking the main thread
+    let _ = std::process::Command::new("pkill")
+        .args(["-RTMIN+8", "waybar"])
+        .spawn()
+        .map(|mut child| {
+            // Immediately detach by not waiting on the child
+            let _ = child.stdin.take();
+            let _ = child.stdout.take();
+            let _ = child.stderr.take();
+        });
 }
 
 /// Stop a running recording by sending SIGUSR1
@@ -97,6 +115,8 @@ pub fn cleanup_recording() -> Result<()> {
     if pid_file.exists() {
         fs::remove_file(&pid_file)?;
         info!("Cleaned up PID file");
+        // Refresh Waybar
+        refresh_waybar();
     }
     Ok(())
 }
