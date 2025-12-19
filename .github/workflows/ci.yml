@@ -146,6 +146,9 @@ jobs:
           readelf -d target/release/dev-voice | grep -E 'NEEDED.*libcudart\.so\.12' || (echo "ERROR: CUDA artifact missing cudart.so.12 in NEEDED section" && exit 1)
           echo "✓ CUDA artifact verified"
 
+      - name: Hash CUDA artifact
+        run: sha256sum target/release/dev-voice
+
       - name: Upload CUDA artifact
         uses: actions/upload-artifact@v4
         with:
