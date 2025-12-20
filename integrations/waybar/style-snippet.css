@@ -7,23 +7,24 @@
 
 #custom-dev-voice.recording {
   color: #ff5555;
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: pulse 0.75s ease-in-out infinite alternate;
 }
 
 #custom-dev-voice.processing {
   color: #f1fa8c;
-  animation: pulse 1s ease-in-out infinite;
+  animation: pulse 0.25s ease-in-out infinite alternate;
 }
 
 #custom-dev-voice.idle {
   color: #6272a4;
+  animation: none;
 }
 
 @keyframes pulse {
-  0%, 100% {
+  from {
     opacity: 1;
   }
-  50% {
+  to {
     opacity: 0.5;
   }
 }
