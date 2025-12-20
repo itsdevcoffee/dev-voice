@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 const APP_NAME: &str = "dev-voice";
 
+const DEFAULT_PROMPT: &str = "async, await, impl, struct, enum, pub, static, btreemap, hashmap, kubernetes, k8s, docker, container, pod, lifecycle, workflow, ci/cd, yaml, json, rustlang, python, javascript, typescript, bash, git, repo, branch, commit, push, pull, merge, rebase, upstream, downstream, middleware, database, sql, postgres, redis, api, endpoint, graphql, rest, grpc, protobuf, systemd, journalctl, flatpak, wayland, nix, cargo.";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub model: ModelConfig,
@@ -15,8 +17,12 @@ pub struct Config {
 pub struct ModelConfig {
     /// Path to whisper model file
     pub path: PathBuf,
+    /// Path to optional draft model file for speculative decoding
+    pub draft_model_path: Option<PathBuf>,
     /// Language code (e.g., "en")
     pub language: String,
+    /// Optional prompt to bias the model vocabulary (technical terms)
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +39,8 @@ pub struct OutputConfig {
     pub display_server: Option<String>,
     /// Add a space after injected text
     pub append_space: bool,
+    /// Command to refresh status bar UI (e.g., "pkill -RTMIN+8 waybar")
+    pub refresh_command: Option<String>,
 }
 
 impl Default for Config {
@@ -43,8 +51,10 @@ impl Default for Config {
 
         Self {
             model: ModelConfig {
-                path: data_dir.join("models/ggml-base.en.bin"),
+                path: data_dir.join("models/ggml-large-v3-turbo.bin"),
+                draft_model_path: Some(data_dir.join("models/ggml-tiny.en.bin")),
                 language: "en".to_string(),
+                prompt: Some(DEFAULT_PROMPT.to_string()),
             },
             audio: AudioConfig {
                 sample_rate: 16000,
@@ -53,6 +63,7 @@ impl Default for Config {
             output: OutputConfig {
                 display_server: None,
                 append_space: true,
+                refresh_command: Some("pkill -RTMIN+8 waybar".to_string()),
             },
         }
     }

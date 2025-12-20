@@ -75,24 +75,56 @@ pub fn start_recording() -> Result<()> {
         pid_file.display()
     );
 
+    // Ensure processing file is gone
+    let _ = cleanup_processing();
+
     // Refresh Waybar
     refresh_waybar();
 
     Ok(())
 }
 
-/// Refresh Waybar status by sending SIGRTMIN+8
-fn refresh_waybar() {
-    // Run in background to avoid blocking the main thread
-    let _ = std::process::Command::new("pkill")
-        .args(["-RTMIN+8", "waybar"])
-        .spawn()
-        .map(|mut child| {
-            // Immediately detach by not waiting on the child
-            let _ = child.stdin.take();
-            let _ = child.stdout.take();
-            let _ = child.stderr.take();
-        });
+/// Refresh UI status bar (Waybar/Polybar/etc.) using configured command
+pub fn refresh_waybar() {
+    // Load config to get refresh command
+    let config = match crate::config::load() {
+        Ok(c) => c,
+        Err(_) => return, // Silently fail if config unavailable
+    };
+
+    if let Some(cmd) = config.output.refresh_command {
+        // Parse command string into program + args
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if let Some((program, args)) = parts.split_first() {
+            let _ = std::process::Command::new(program)
+                .args(args)
+                .spawn()
+                .map(|mut child| {
+                    // Immediately detach by not waiting on the child
+                    let _ = child.stdin.take();
+                    let _ = child.stdout.take();
+                    let _ = child.stderr.take();
+                });
+        }
+    }
+}
+
+/// Start processing state (create processing file)
+pub fn start_processing() -> Result<()> {
+    let processing_file = super::paths::get_state_dir()?.join("processing");
+    fs::write(&processing_file, "")?;
+    refresh_waybar();
+    Ok(())
+}
+
+/// Stop processing state (remove processing file)
+pub fn cleanup_processing() -> Result<()> {
+    let processing_file = super::paths::get_state_dir()?.join("processing");
+    if processing_file.exists() {
+        fs::remove_file(&processing_file)?;
+        refresh_waybar();
+    }
+    Ok(())
 }
 
 /// Stop a running recording by sending SIGUSR1
@@ -115,8 +147,8 @@ pub fn cleanup_recording() -> Result<()> {
     if pid_file.exists() {
         fs::remove_file(&pid_file)?;
         info!("Cleaned up PID file");
-        // Refresh Waybar
-        refresh_waybar();
+        // Start processing state visually
+        let _ = start_processing();
     }
     Ok(())
 }

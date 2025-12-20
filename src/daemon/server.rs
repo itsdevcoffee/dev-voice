@@ -79,8 +79,15 @@ struct DaemonServer {
 
 impl DaemonServer {
     fn new(model_path: &Path) -> Result<Self> {
+        let config = crate::config::load()?;
+
         info!("Loading whisper model into GPU memory...");
-        let transcriber = Transcriber::new(model_path).context("Failed to load whisper model")?;
+        let transcriber = Transcriber::with_draft(
+            model_path,
+            config.model.draft_model_path.as_deref(),
+            config.model.prompt.clone(),
+        )
+        .context("Failed to load whisper model")?;
         info!("Model loaded and resident in GPU VRAM");
 
         Ok(Self {

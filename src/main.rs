@@ -53,8 +53,8 @@ enum Commands {
 
     /// Download a whisper model
     Download {
-        /// Model size: tiny.en, base.en, small.en, medium.en, large
-        #[arg(default_value = "base.en")]
+        /// Model name (e.g. large-v3-turbo, distil-large-v3, base.en)
+        #[arg(default_value = "large-v3-turbo")]
         model: String,
     },
 
@@ -208,6 +208,9 @@ fn cmd_start_toggle(model_override: Option<String>, clipboard: bool) -> Result<(
 
         // Send stop request and wait for transcription
         let response = daemon::send_request(&daemon::DaemonRequest::StopRecording)?;
+
+        // End processing state in UI
+        let _ = state::cleanup_processing();
 
         match response {
             daemon::DaemonResponse::Success { text } => {
