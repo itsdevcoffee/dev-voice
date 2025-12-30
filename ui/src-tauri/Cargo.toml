@@ -1,0 +1,26 @@
+[package]
+name = "hyprvoice-ui"
+version = "0.4.0"
+description = "GPU-accelerated voice dictation UI for hyprvoice"
+authors = ["itsdevcoffee"]
+license = "MIT"
+repository = "https://github.com/itsdevcoffee/hyprvoice"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["protocol-asset"] }
+tauri-plugin-shell = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+num_cpus = "1.16"
