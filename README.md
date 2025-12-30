@@ -123,14 +123,23 @@ hyprvoice stop     # Transcribe and inject text
 - [ ] Automated model downloads on first run
 - [ ] Performance benchmarking suite
 
-### 🔮 **v0.4.0 - Future** (Advanced Features)
+### 🎨 **v0.4.0 - UI & Developer Experience** (Next Major)
+- [ ] **Tauri-based GUI** with glassmorphic design
+- [ ] Real-time dashboard (stats, audio visualizer, GPU usage)
+- [ ] Visual settings editor (models, audio devices, vocabulary)
+- [ ] Transcription history with export
+- [ ] Developer tools panel (logs, diagnostics, benchmarks)
+- [ ] System tray integration
+- [ ] One-click model management
+
+### 🔮 **v0.5.0 - Advanced Features**
 - [ ] Context-aware vocabulary (detect `.rs`, `.py`, `.ts` files, bias accordingly)
 - [ ] DeepFilterNet noise cancellation (handle keyboard/fan noise)
 - [ ] AT-SPI2 integration (pull active window context for better accuracy)
 - [ ] Multi-language testing (Spanish, French, German)
 - [ ] Custom wake words for hands-free mode
 
-### 🌟 **v1.0.0 - Vision** (Production Ready)
+### 🌟 **v1.0.0 - Production Ready**
 - [ ] IDE plugins (VSCode, Neovim, JetBrains)
 - [ ] Voice commands ("undo last", "format code", "new line")
 - [ ] Project-specific vocabulary learning
