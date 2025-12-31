@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/ipc';
 import { motion } from 'framer-motion';
 import { Mic, Square, Zap, Cpu, HardDrive, Database } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
