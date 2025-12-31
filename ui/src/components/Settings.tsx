@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { Save, RotateCcw, Check } from 'lucide-react';
 import { invoke } from '../lib/ipc';
 import { cn } from '../lib/utils';
+import { useAppStore } from '../stores/appStore';
+import RestartBanner from './RestartBanner';
 
 interface Config {
   model: {
@@ -25,10 +27,15 @@ interface Config {
 }
 
 export default function Settings() {
+  const { isRecording } = useAppStore();
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [needsRestart, setNeedsRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [restartSuccess, setRestartSuccess] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
 
   useEffect(() => {
     loadConfig();
@@ -53,6 +60,9 @@ export default function Settings() {
       setSaving(true);
       await invoke('save_config', { config });
       setSaved(true);
+      setNeedsRestart(true); // Show restart banner
+      setRestartSuccess(false);
+      setRestartError(null);
       setTimeout(() => setSaved(false), 3000);
     } catch (error) {
       console.error('Failed to save config:', error);
@@ -60,6 +70,37 @@ export default function Settings() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleRestart = async () => {
+    if (isRecording) {
+      setRestartError('Cannot restart while recording. Stop first.');
+      return;
+    }
+
+    try {
+      setRestarting(true);
+      setRestartError(null);
+      await invoke('restart_daemon');
+      setRestartSuccess(true);
+      setNeedsRestart(false);
+
+      // Auto-dismiss success message after 3 seconds
+      setTimeout(() => {
+        setRestartSuccess(false);
+      }, 3000);
+    } catch (error) {
+      console.error('Failed to restart daemon:', error);
+      setRestartError(String(error));
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const handleDismissBanner = () => {
+    setNeedsRestart(false);
+    setRestartSuccess(false);
+    setRestartError(null);
   };
 
   const handleReset = () => {
@@ -78,6 +119,17 @@ export default function Settings() {
 
   return (
     <div className="space-y-6">
+      {/* Restart Banner */}
+      <RestartBanner
+        show={needsRestart || restartSuccess || restartError !== null}
+        isRecording={isRecording}
+        restarting={restarting}
+        success={restartSuccess}
+        error={restartError}
+        onRestart={handleRestart}
+        onDismiss={handleDismissBanner}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

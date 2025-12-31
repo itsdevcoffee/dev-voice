@@ -242,3 +242,61 @@ pub async fn save_config(config: AppConfig) -> Result<(), String> {
 
     Ok(())
 }
+
+/// Restart the hyprvoice daemon with new configuration
+#[tauri::command]
+pub async fn restart_daemon() -> Result<(), String> {
+    // 1. Send shutdown command to daemon
+    let shutdown_request = daemon_client::DaemonRequest::Shutdown;
+    match daemon_client::send_request(shutdown_request) {
+        Ok(_) => {
+            eprintln!("Shutdown command sent to daemon");
+        }
+        Err(e) => {
+            eprintln!("Failed to send shutdown (daemon might be down): {}", e);
+        }
+    }
+
+    // 2. Wait for daemon to fully shut down (max 3 seconds)
+    for i in 0..30 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        if !daemon_client::is_daemon_running() {
+            eprintln!("Daemon shut down after {}ms", i * 100);
+            break;
+        }
+    }
+
+    // 3. Start new daemon process
+    // Find hyprvoice binary (prefer -test, -cuda, or default)
+    let binary = if let Ok(home) = std::env::var("HOME") {
+        let bin_dir = format!("{}/.local/bin", home);
+        ["hyprvoice-test", "hyprvoice-cuda", "hyprvoice"]
+            .iter()
+            .map(|name| format!("{}/{}", bin_dir, name))
+            .find(|path| std::path::Path::new(path).exists())
+            .unwrap_or_else(|| "hyprvoice".to_string())
+    } else {
+        "hyprvoice".to_string()
+    };
+
+    eprintln!("Starting daemon with binary: {}", binary);
+
+    std::process::Command::new(&binary)
+        .arg("daemon")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start daemon: {}", e))?;
+
+    // 4. Wait for daemon to be ready (max 5 seconds)
+    for i in 0..50 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        if daemon_client::is_daemon_running() {
+            eprintln!("Daemon started successfully after {}ms", i * 100);
+            return Ok(());
+        }
+    }
+
+    Err("Daemon failed to start within 5 seconds".to_string())
+}

@@ -26,6 +26,7 @@ fn main() {
             commands::get_system_info,
             commands::get_config,
             commands::save_config,
+            commands::restart_daemon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
