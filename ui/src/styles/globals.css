@@ -88,6 +88,17 @@
 
   select.glass-input {
     @apply cursor-pointer;
+    background-color: rgba(10, 10, 10, 0.9);
+  }
+
+  select.glass-input option {
+    background-color: #1a1a1a;
+    color: white;
+    padding: 8px;
+  }
+
+  select.glass-input option:hover {
+    background-color: #2a2a2a;
   }
 }
 
