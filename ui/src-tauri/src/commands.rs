@@ -81,6 +81,10 @@ pub async fn stop_recording() -> Result<String, String> {
         Ok(response) => match response {
             daemon_client::DaemonResponse::Success { text } => {
                 println!("Transcription: {}", text);
+
+                // Trigger Waybar refresh (same as CLI does)
+                refresh_waybar();
+
                 Ok(text)
             }
             daemon_client::DaemonResponse::Error { message } => {
@@ -90,6 +94,20 @@ pub async fn stop_recording() -> Result<String, String> {
         },
         Err(e) => Err(format!("Failed to stop recording: {}", e)),
     }
+}
+
+/// Refresh Waybar status (trigger signal)
+fn refresh_waybar() {
+    // Run: pkill -RTMIN+8 waybar
+    let _ = std::process::Command::new("pkill")
+        .args(["-RTMIN+8", "waybar"])
+        .spawn()
+        .map(|mut child| {
+            // Detach immediately
+            let _ = child.stdin.take();
+            let _ = child.stdout.take();
+            let _ = child.stderr.take();
+        });
 }
 
 /// Get transcription history
