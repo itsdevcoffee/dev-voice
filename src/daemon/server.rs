@@ -250,6 +250,13 @@ impl DaemonServer {
             }
         }
 
+        // CRITICAL: Remove recording.pid BEFORE creating processing file
+        // Otherwise Waybar keeps showing "recording" (checks recording.pid first)
+        state::toggle::cleanup_recording()?;
+
+        // Create processing state file for Waybar (now recording.pid is gone)
+        state::toggle::start_processing()?;
+
         // Transcribe with the persistent model
         info!("Transcribing {} samples...", samples.len());
         let mut transcriber = self
@@ -279,8 +286,8 @@ impl DaemonServer {
 
         info!("Transcribed: {}", text);
 
-        // Clean up PID file (recording complete)
-        state::toggle::cleanup_recording()?;
+        // Clean up processing state file (recording.pid already removed above)
+        state::toggle::cleanup_processing()?;
 
         Ok(DaemonResponse::Success { text })
     }
