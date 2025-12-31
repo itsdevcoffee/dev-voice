@@ -293,13 +293,20 @@ export default function Settings() {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={async () => {
-                    const selected = await open({
-                      directory: true,
-                      multiple: false,
-                      defaultPath: config.audio.audio_clips_path,
-                    });
-                    if (selected) {
-                      setConfig({ ...config, audio: { ...config.audio, audio_clips_path: selected as string }});
+                    try {
+                      console.log('Opening folder picker...');
+                      const selected = await open({
+                        directory: true,
+                        multiple: false,
+                        defaultPath: config.audio.audio_clips_path,
+                      });
+                      console.log('Selected:', selected);
+                      if (selected) {
+                        setConfig({ ...config, audio: { ...config.audio, audio_clips_path: selected as string }});
+                      }
+                    } catch (error) {
+                      console.error('Failed to open folder picker:', error);
+                      alert(`Failed to open folder picker: ${error}`);
                     }
                   }}
                   className="glass-button px-3 py-2 text-cyan-400"
