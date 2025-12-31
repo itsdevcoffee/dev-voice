@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::daemon_client;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonStatus {
@@ -29,30 +30,66 @@ pub struct SystemInfo {
 /// Check if the hyprvoice daemon is running
 #[tauri::command]
 pub async fn get_daemon_status() -> Result<DaemonStatus, String> {
-    // TODO: Connect to daemon via Unix socket at ~/.local/state/hyprvoice/daemon.sock
-    // For now, return mock data
-    Ok(DaemonStatus {
-        running: true,
-        model_loaded: true,
-        gpu_enabled: true,
-        gpu_name: Some("NVIDIA RTX 4090".to_string()),
-    })
+    match daemon_client::get_status() {
+        Ok(status) => Ok(DaemonStatus {
+            running: status.running,
+            model_loaded: status.model_loaded,
+            gpu_enabled: status.gpu_enabled,
+            gpu_name: status.gpu_name,
+        }),
+        Err(e) => {
+            eprintln!("Failed to get daemon status: {}", e);
+            // Return offline status on error
+            Ok(DaemonStatus {
+                running: false,
+                model_loaded: false,
+                gpu_enabled: false,
+                gpu_name: None,
+            })
+        }
+    }
 }
 
 /// Start recording audio
 #[tauri::command]
 pub async fn start_recording() -> Result<(), String> {
-    // TODO: Send StartRecording command to daemon
-    println!("Starting recording...");
-    Ok(())
+    let request = daemon_client::DaemonRequest::StartRecording {
+        max_duration: 300, // 5 minutes max
+    };
+
+    match daemon_client::send_request(request) {
+        Ok(response) => match response {
+            daemon_client::DaemonResponse::Recording => {
+                println!("Recording started");
+                Ok(())
+            }
+            daemon_client::DaemonResponse::Error { message } => {
+                Err(format!("Daemon error: {}", message))
+            }
+            _ => Err("Unexpected response from daemon".to_string()),
+        },
+        Err(e) => Err(format!("Failed to start recording: {}", e)),
+    }
 }
 
 /// Stop recording and transcribe
 #[tauri::command]
 pub async fn stop_recording() -> Result<String, String> {
-    // TODO: Send StopRecording command to daemon and get transcription
-    println!("Stopping recording...");
-    Ok("This is a test transcription".to_string())
+    let request = daemon_client::DaemonRequest::StopRecording;
+
+    match daemon_client::send_request(request) {
+        Ok(response) => match response {
+            daemon_client::DaemonResponse::Success { text } => {
+                println!("Transcription: {}", text);
+                Ok(text)
+            }
+            daemon_client::DaemonResponse::Error { message } => {
+                Err(format!("Daemon error: {}", message))
+            }
+            _ => Err("Unexpected response from daemon".to_string()),
+        },
+        Err(e) => Err(format!("Failed to stop recording: {}", e)),
+    }
 }
 
 /// Get transcription history
